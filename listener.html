@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Prompter - Listener</title>
+<style>
+html,body{margin:0;height:100%;background:#000;color:#fff;overflow:hidden}
+#wrap{position:absolute;left:0;top:0;right:0;bottom:0}
+#stage{position:absolute;left:0;top:0;right:0;bottom:0;overflow:hidden}
+#txt{position:absolute;left:0;top:0;font-family:Arial,Helvetica,sans-serif;font-weight:bold;line-height:1.35;will-change:transform;box-sizing:border-box;word-wrap:break-word}
+#count{position:absolute;left:0;top:0;right:0;bottom:0;display:none;align-items:center;justify-content:center;font-size:45vmin;font-family:Arial,sans-serif;font-weight:bold;color:#fff;text-shadow:0 0 30px #000}
+#info{position:absolute;right:10px;top:6px;font-size:22px;color:#e03131;opacity:.6;padding:6px}
+#estado{position:absolute;left:10px;bottom:8px;font-family:Arial,sans-serif;font-size:14px;color:#777}
+#start{position:absolute;left:0;top:0;right:0;bottom:0;z-index:10;background:#000;display:flex;align-items:center;justify-content:center;text-align:center;font-family:Arial,sans-serif;color:#ccc}
+#start input{font-size:36px;letter-spacing:6px;text-align:center;text-transform:uppercase;width:80%;max-width:320px;padding:10px;border-radius:10px;border:1px solid #444;background:#111;color:#fff}
+#start button{display:block;margin:18px auto 0;font-size:20px;padding:14px 22px;border:0;border-radius:12px;background:#1f9d55;color:#fff}
+#msg{margin-top:12px;font-size:14px;color:#e8590c;min-height:18px}
+</style>
+<script src="https://unpkg.com/peerjs@1/dist/peerjs.min.js"></script>
+<script>window.Peer||document.write('<script src="https://cdn.jsdelivr.net/npm/peerjs@1/dist/peerjs.min.js"><\/script>');</script>
+<script>window.Peer||document.write('<script src="peerjs.min.js"><\/script>');</script>
+</head>
+<body>
+<div id="wrap">
+  <div id="stage"><div id="txt"></div></div>
+  <div id="count"></div>
+</div>
+<div id="info">&#9679;</div>
+<div id="estado"></div>
+<div id="start"><div>
+  <div style="font-size:22px;margin-bottom:14px">Codigo da sala</div>
+  <input id="cod" maxlength="6" autocomplete="off" autocapitalize="characters" spellcheck="false">
+  <button id="go">Conectar e ativar tela</button>
+  <div id="msg"></div>
+</div></div>
+
+<script>
+function lerLS(k){try{return localStorage.getItem(k);}catch(e){return null;}}
+function gravarLS(k,v){try{localStorage.setItem(k,v);}catch(e){}}
+var wrap=document.getElementById('wrap'),stage=document.getElementById('stage'),
+    txt=document.getElementById('txt'),countEl=document.getElementById('count'),
+    info=document.getElementById('info'),estadoEl=document.getElementById('estado'),
+    startEl=document.getElementById('start'),codEl=document.getElementById('cod'),
+    msgEl=document.getElementById('msg');
+var PREFIXO='tprompt-';
+var cfg={texto:'',tamanho:48,velocidade:60,direcao:'vertical',espelho:'nenhum',atraso:5};
+var modo='idle',pos=0,fim=0,ultimaChave=null,lastT=0,estadoVisivel=true;
+
+/* ---------- texto na tela ---------- */
+function chave(){return [cfg.tamanho,cfg.direcao,cfg.espelho,cfg.texto].join('|');}
+function aplicar(){
+  var v=cfg.direcao==='vertical';
+  txt.style.fontSize=cfg.tamanho+'px';
+  if(v){
+    txt.style.whiteSpace='pre-wrap';txt.style.width='100%';
+    txt.style.padding='40vh 6vw 100vh';txt.style.top='0';
+    txt.textContent=cfg.texto;
+  }else{
+    txt.style.whiteSpace='nowrap';txt.style.width='auto';
+    txt.style.padding='0 100vw';txt.style.top='50%';
+    txt.textContent=cfg.texto.replace(/\s*\n+\s*/g,'   ●   ');
+  }
+  var m={nenhum:'none',horizontal:'scaleX(-1)',vertical:'scaleY(-1)',ambos:'scale(-1,-1)'};
+  wrap.style.transform=m[cfg.espelho]||'none';
+  ultimaChave=chave();
+  var mx=maxPos();if(pos>mx)pos=Math.max(mx,0);
+}
+function maxPos(){
+  return cfg.direcao==='vertical'?(txt.offsetHeight-stage.clientHeight):(txt.offsetWidth-stage.clientWidth);
+}
+function render(){
+  txt.style.transform=cfg.direcao==='vertical'
+    ?'translate3d(0,'+(-pos)+'px,0)'
+    :'translate3d('+(-pos)+'px,-50%,0)';
+}
+function esconderContagem(){countEl.style.display='none';}
+
+function comando(c){
+  if(c==='play'){
+    pos=0;
+    if(cfg.atraso>0){modo='count';fim=new Date().getTime()+cfg.atraso*1000;}
+    else{modo='play';esconderContagem();}
+  }else if(c==='pause'){
+    if(modo==='play'||modo==='count'){modo='pause';esconderContagem();}
+  }else if(c==='resume'){
+    if(modo==='pause')modo='play';
+  }else if(c==='stop'){
+    modo='idle';pos=0;esconderContagem();
+  }
+}
+function receberEstado(s){
+  cfg.texto=s.texto||'';cfg.tamanho=s.tamanho;cfg.velocidade=s.velocidade;
+  cfg.direcao=s.direcao;cfg.espelho=s.espelho;cfg.atraso=s.atraso;
+  if(chave()!==ultimaChave)aplicar();
+}
+function tratar(m){
+  if(!m)return;
+  if(m.t==='state'&&m.s)receberEstado(m.s);
+  else if(m.t==='cmd')comando(m.c);
+}
+
+function frame(t){
+  var dt=lastT?(t-lastT)/1000:0;lastT=t;if(dt>0.1)dt=0.1;
+  if(modo==='count'){
+    var rest=Math.ceil((fim-new Date().getTime())/1000);
+    if(rest<=0){modo='play';esconderContagem();}
+    else{countEl.style.display='flex';countEl.textContent=rest;}
+  }else if(modo==='play'){
+    pos+=cfg.velocidade*dt;
+    var m=maxPos();
+    if(pos>=m){pos=Math.max(m,0);modo='fim';}
+  }
+  render();
+  var vis=(modo!=='play');
+  if(vis!==estadoVisivel){estadoVisivel=vis;estadoEl.style.display=vis?'block':'none';}
+  requestAnimationFrame(frame);
+}
+
+/* ---------- rede (PeerJS) ---------- */
+var codigo=null,peer=null,conn=null,connTs=0,ocupado=false;
+function estado(t,cor){estadoEl.textContent=t;info.style.color=cor||'#e03131';}
+function abrirConn(){
+  if(conn&&conn.open)return;
+  if(conn){try{conn.close();}catch(e){}}
+  var c=peer.connect(PREFIXO+codigo,{reliable:true});
+  conn=c;connTs=new Date().getTime();
+  estado('conectando ao controle...','#f08c00');
+  c.on('open',function(){estado('conectado','#2f9e44');});
+  c.on('data',tratar);
+  c.on('close',function(){if(conn===c){conn=null;estado('desconectado - tentando de novo...');}});
+  c.on('error',function(){if(conn===c){conn=null;}});
+}
+function tentar(){
+  if(!codigo||!window.Peer)return;
+  if(!peer||peer.destroyed){
+    if(ocupado)return;
+    ocupado=true;conn=null;
+    estado('conectando ao servidor...','#f08c00');
+    var p=new Peer();
+    peer=p;
+    p.on('open',function(){ocupado=false;abrirConn();});
+    p.on('disconnected',function(){try{p.reconnect();}catch(e){}});
+    p.on('error',function(err){
+      ocupado=false;
+      if(err&&err.type==='peer-unavailable'){conn=null;estado('aguardando o controle (sala '+codigo+')...');}
+      else estado('erro: '+(err&&err.type?err.type:err));
+    });
+    p.on('close',function(){ocupado=false;if(peer===p)peer=null;});
+    return;
+  }
+  if(peer.disconnected){try{peer.reconnect();}catch(e){}return;}
+  if(peer.open){
+    if(!conn)abrirConn();
+    else if(!conn.open&&new Date().getTime()-connTs>10000)abrirConn();
+  }
+}
+setInterval(tentar,3000);
+
+/* ---------- tela inicial / tela cheia / tela ligada ---------- */
+function pedirWake(){
+  try{if(navigator.wakeLock){navigator.wakeLock.request('screen').catch(function(){});}}catch(e){}
+}
+document.addEventListener('visibilitychange',function(){if(!document.hidden){pedirWake();tentar();}});
+
+function parametro(n){
+  var m=location.search.match(new RegExp('[?&]'+n+'=([^&]*)'));
+  return m?decodeURIComponent(m[1]):null;
+}
+var inicial=(parametro('c')||lerLS('tp_codigo_l')||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
+codEl.value=inicial;
+
+document.getElementById('go').onclick=function(){
+  var c=codEl.value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+  if(c.length<4){msgEl.textContent='Digite o codigo mostrado no Controle';return;}
+  msgEl.textContent='';
+  gravarLS('tp_codigo_l',c);
+  var d=document.documentElement;
+  try{(d.requestFullscreen||d.webkitRequestFullscreen||function(){}).call(d);}catch(e){}
+  pedirWake();
+  if(c!==codigo){
+    codigo=c;
+    if(peer){try{peer.destroy();}catch(e){}}
+    peer=null;conn=null;ocupado=false;
+  }
+  startEl.style.display='none';
+  tentar();
+};
+info.onclick=function(){startEl.style.display='flex';};
+if(!window.Peer)msgEl.textContent='Biblioteca PeerJS nao carregou - confira a internet';
+
+aplicar();
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

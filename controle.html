@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prompter - Controle</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;background:#0b0d14;color:#e8eaf2;font-family:system-ui,Arial,sans-serif;padding:12px}
+h1{font-size:18px;margin:0 0 10px}
+.card{background:#151926;border-radius:12px;padding:12px;margin-bottom:12px}
+label{display:block;font-size:13px;color:#9aa3b8;margin:10px 0 4px}
+input[type=text],input[type=number],textarea,select{width:100%;background:#0b0d14;color:#fff;border:1px solid #2a3150;border-radius:8px;padding:10px;font-size:16px}
+textarea{min-height:200px;resize:vertical}
+input[type=range]{width:100%}
+button{background:#2a3150;color:#fff;border:0;border-radius:10px;padding:12px 14px;font-size:16px}
+button:active{opacity:.7}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+.play{background:#1f9d55}.pause{background:#d69e2e}.stop{background:#c53030}
+.big button{padding:20px 6px;font-size:20px}
+.item{padding:12px;border-radius:8px;background:#0b0d14;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.item.sel{outline:2px solid #4c6ef5}
+.small{font-size:12px;color:#9aa3b8;word-break:break-all}
+#status{margin-top:10px;font-size:14px;color:#9aa3b8;min-height:18px}
+.top{position:sticky;top:0;z-index:5}
+.code{font-size:36px;letter-spacing:6px;font-weight:bold;text-align:center;margin:6px 0}
+.ok{color:#2f9e44}.bad{color:#e8590c}
+</style>
+<script src="https://unpkg.com/peerjs@1/dist/peerjs.min.js"></script>
+<script>window.Peer||document.write('<script src="https://cdn.jsdelivr.net/npm/peerjs@1/dist/peerjs.min.js"><\/script>');</script>
+<script>window.Peer||document.write('<script src="peerjs.min.js"><\/script>');</script>
+</head>
+<body>
+<h1>Teleprompter - Controle</h1>
+
+<div class="card top">
+  <div class="row big">
+    <button class="play" onclick="btnPlay()">&#9654; Play</button>
+    <button class="pause" id="btnpause" onclick="btnPause()">&#9208; Pausar</button>
+    <button class="stop" onclick="btnStop()">&#9209; Stop</button>
+  </div>
+  <div id="status">pronto</div>
+</div>
+
+<div class="card">
+  <div class="small">Codigo da sala (digite no Listener):</div>
+  <div class="code" id="codigo"></div>
+  <div class="small">Rede: <span id="rede">iniciando...</span></div>
+  <div class="small">Listener: <b id="ls" class="bad">aguardando</b></div>
+  <div class="small" style="margin-top:8px">Link direto para o Listener:<br><span id="link"></span></div>
+  <div class="row" style="margin-top:10px"><button onclick="novoCodigo()">Gerar novo codigo</button></div>
+</div>
+
+<div class="card">
+  <label>Tamanho da letra: <b id="vtam"></b></label>
+  <input type="range" id="tamanho" min="20" max="200" value="48">
+  <label>Velocidade: <b id="vvel"></b></label>
+  <input type="range" id="velocidade" min="5" max="400" value="60">
+  <label>Direcao da rolagem</label>
+  <select id="direcao">
+    <option value="vertical">Vertical (de baixo pra cima)</option>
+    <option value="horizontal">Horizontal (da direita pra esquerda)</option>
+  </select>
+  <label>Espelhamento</label>
+  <select id="espelho">
+    <option value="nenhum">Normal</option>
+    <option value="horizontal">Espelhado horizontal</option>
+    <option value="vertical">Espelhado vertical (de cabeca pra baixo)</option>
+    <option value="ambos">Horizontal + vertical (180 graus)</option>
+  </select>
+  <label>Contagem antes de comecar (segundos)</label>
+  <input type="number" id="atraso" min="0" max="60" value="5">
+</div>
+
+<div class="card">
+  <label style="margin-top:0">Titulo</label>
+  <input type="text" id="titulo" placeholder="Ex.: Video 1">
+  <label>Texto</label>
+  <textarea id="texto" placeholder="Cole o texto aqui..."></textarea>
+  <div class="row" style="margin-top:10px">
+    <button onclick="salvar()">Salvar</button>
+    <button onclick="novo()">Novo</button>
+    <button onclick="apagar()" style="background:#7a2a2a">Apagar</button>
+  </div>
+</div>
+
+<div class="card">
+  <label style="margin-top:0">Textos salvos (ficam neste celular)</label>
+  <div id="lista"></div>
+  <div class="row" style="margin-top:10px">
+    <button onclick="exportar()">Exportar backup</button>
+    <button onclick="el('arquivo').click()">Importar backup</button>
+  </div>
+  <input type="file" id="arquivo" accept="application/json,.json" style="display:none">
+</div>
+
+<script>
+function el(id){return document.getElementById(id);}
+function lerLS(k,def){try{var v=localStorage.getItem(k);return v?JSON.parse(v):def;}catch(e){return def;}}
+function gravarLS(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+
+/* ---------- codigo da sala ---------- */
+var ALFA='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+var PREFIXO='tprompt-';
+function gerarCodigo(){var s='',i;for(i=0;i<6;i++)s+=ALFA.charAt(Math.floor(Math.random()*ALFA.length));return s;}
+var codigo=lerLS('tp_codigo',null);
+if(!codigo){codigo=gerarCodigo();gravarLS('tp_codigo',codigo);}
+function mostraCodigo(){
+  el('codigo').textContent=codigo;
+  var base=location.origin+location.pathname.replace(/[^\/]*$/,'');
+  el('link').textContent=base+'listener.html?c='+codigo;
+}
+function novoCodigo(){
+  if(!confirm('Gerar novo codigo? O Listener precisara do codigo novo.'))return;
+  codigo=gerarCodigo();gravarLS('tp_codigo',codigo);mostraCodigo();
+  if(peer){try{peer.destroy();}catch(e){}}
+  conns=[];atualizaLs();
+}
+
+/* ---------- estado / textos ---------- */
+var atual=null,pausado=false,timer=null;
+var textos=lerLS('tp_textos',[]);
+var aj=lerLS('tp_ajustes',{texto:'',tamanho:48,velocidade:60,direcao:'vertical',espelho:'nenhum',atraso:5});
+
+function status(t){el('status').textContent=t;}
+function rotulos(){
+  el('vtam').textContent=el('tamanho').value+' px';
+  el('vvel').textContent=el('velocidade').value+' px/s';
+}
+function estadoAtual(){
+  var a=parseInt(el('atraso').value,10);
+  if(isNaN(a))a=5;
+  return {
+    texto:el('texto').value,
+    tamanho:parseInt(el('tamanho').value,10)||48,
+    velocidade:parseInt(el('velocidade').value,10)||60,
+    direcao:el('direcao').value,
+    espelho:el('espelho').value,
+    atraso:Math.max(0,Math.min(60,a))
+  };
+}
+function enviarEstado(){
+  rotulos();
+  var st=estadoAtual();
+  gravarLS('tp_ajustes',st);
+  enviarMsg({t:'state',s:st});
+}
+function agendar(ms){clearTimeout(timer);timer=setTimeout(enviarEstado,ms);}
+
+/* ---------- rede (PeerJS) ---------- */
+var peer=null,conns=[];
+function rede(t){el('rede').textContent=t;}
+function abertas(){var n=0,i;for(i=0;i<conns.length;i++)if(conns[i].open)n++;return n;}
+function atualizaLs(){
+  var n=abertas(),e=el('ls');
+  e.textContent=n>0?'conectado':'aguardando';
+  e.className=n>0?'ok':'bad';
+}
+function enviarMsg(m){
+  var i;
+  for(i=0;i<conns.length;i++){if(conns[i].open){try{conns[i].send(m);}catch(e){}}}
+}
+function aceitar(c){
+  var antigas=conns.slice(),i;
+  conns=[c];
+  for(i=0;i<antigas.length;i++){try{antigas[i].close();}catch(e){}}
+  c.on('open',function(){
+    atualizaLs();
+    try{c.send({t:'state',s:estadoAtual()});}catch(e){}
+  });
+  function sair(){
+    var k=conns.indexOf(c);
+    if(k>=0)conns.splice(k,1);
+    atualizaLs();
+  }
+  c.on('close',sair);
+  c.on('error',sair);
+}
+function criarPeer(){
+  if(!window.Peer){rede('biblioteca PeerJS nao carregou (sem internet?)');return;}
+  rede('conectando ao servidor...');
+  var p=new Peer(PREFIXO+codigo);
+  peer=p;
+  p.on('open',function(){rede('online - sala '+codigo);});
+  p.on('connection',aceitar);
+  p.on('disconnected',function(){rede('reconectando...');});
+  p.on('error',function(err){
+    if(err&&err.type==='unavailable-id')rede('codigo ainda em uso pela sessao anterior, tentando de novo...');
+    else rede('erro: '+(err&&err.type?err.type:err)+' (tentando de novo)');
+  });
+  p.on('close',function(){atualizaLs();});
+}
+function vigia(){
+  if(!peer||peer.destroyed){criarPeer();}
+  else if(peer.disconnected){try{peer.reconnect();}catch(e){}}
+  atualizaLs();
+}
+setInterval(vigia,3000);
+document.addEventListener('visibilitychange',function(){if(!document.hidden)vigia();});
+
+/* ---------- comandos ---------- */
+function cmd(c,msg){
+  if(abertas()===0){status('Listener NAO conectado - nada foi enviado');return;}
+  enviarMsg({t:'cmd',c:c});
+  status(msg);
+}
+function btnPlay(){
+  pausado=false;el('btnpause').innerHTML='&#9208; Pausar';
+  enviarEstado();
+  cmd('play','Play enviado - contagem de '+estadoAtual().atraso+'s no listener');
+}
+function btnPause(){
+  if(!pausado){
+    pausado=true;el('btnpause').innerHTML='&#9654; Continuar';cmd('pause','Pausado');
+  }else{
+    pausado=false;el('btnpause').innerHTML='&#9208; Pausar';cmd('resume','Continuando');
+  }
+}
+function btnStop(){
+  pausado=false;el('btnpause').innerHTML='&#9208; Pausar';cmd('stop','Parado (voltou ao inicio)');
+}
+
+/* ---------- textos salvos ---------- */
+function novoId(){return String(new Date().getTime())+Math.floor(Math.random()*1000);}
+function desenhaLista(){
+  var box=el('lista'),i;
+  box.innerHTML='';
+  if(!textos.length){box.innerHTML='<div class="small">Nenhum texto salvo ainda.</div>';return;}
+  for(i=0;i<textos.length;i++){
+    (function(t){
+      var d=document.createElement('div');
+      d.className='item'+(t.id===atual?' sel':'');
+      d.textContent=t.titulo;
+      d.onclick=function(){selecionar(t);};
+      box.appendChild(d);
+    })(textos[i]);
+  }
+}
+function selecionar(t){
+  atual=t.id;el('titulo').value=t.titulo;el('texto').value=t.texto;
+  desenhaLista();enviarEstado();status('Texto "'+t.titulo+'" carregado');
+}
+function salvar(){
+  var texto=el('texto').value;
+  var titulo=el('titulo').value.replace(/^\s+|\s+$/g,'')||texto.substring(0,30)||'Sem titulo';
+  var i,item=null;
+  for(i=0;i<textos.length;i++){if(textos[i].id===atual){item=textos[i];break;}}
+  if(!item){item={id:novoId()};textos.push(item);}
+  item.titulo=titulo;item.texto=texto;atual=item.id;
+  el('titulo').value=titulo;
+  gravarLS('tp_textos',textos);desenhaLista();status('Salvo');
+}
+function novo(){
+  atual=null;el('titulo').value='';el('texto').value='';desenhaLista();enviarEstado();
+}
+function apagar(){
+  if(!atual){status('Selecione um texto salvo para apagar');return;}
+  if(!confirm('Apagar este texto?'))return;
+  var i;
+  for(i=0;i<textos.length;i++){if(textos[i].id===atual){textos.splice(i,1);break;}}
+  gravarLS('tp_textos',textos);
+  atual=null;el('titulo').value='';el('texto').value='';desenhaLista();enviarEstado();status('Apagado');
+}
+function exportar(){
+  var blob=new Blob([JSON.stringify(textos,null,2)],{type:'application/json'});
+  var a=document.createElement('a');
+  a.href=URL.createObjectURL(blob);a.download='prompter-textos.json';
+  document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+el('arquivo').onchange=function(){
+  var f=this.files&&this.files[0];
+  if(!f)return;
+  var r=new FileReader();
+  r.onload=function(){
+    try{
+      var arr=JSON.parse(r.result),i,j,n=0;
+      for(i=0;i<arr.length;i++){
+        var it=arr[i];
+        if(!it||typeof it.titulo!=='string'||typeof it.texto!=='string')continue;
+        var achou=null;
+        for(j=0;j<textos.length;j++){if(it.id&&textos[j].id===it.id){achou=textos[j];break;}}
+        if(achou){achou.titulo=it.titulo;achou.texto=it.texto;}
+        else{textos.push({id:it.id||novoId(),titulo:it.titulo,texto:it.texto});}
+        n++;
+      }
+      gravarLS('tp_textos',textos);desenhaLista();status(n+' texto(s) importado(s)');
+    }catch(e){status('Arquivo invalido');}
+  };
+  r.readAsText(f);
+  this.value='';
+};
+
+/* ---------- eventos ---------- */
+el('tamanho').oninput=function(){rotulos();agendar(120);};
+el('velocidade').oninput=function(){rotulos();agendar(120);};
+el('direcao').onchange=enviarEstado;
+el('espelho').onchange=enviarEstado;
+el('atraso').onchange=enviarEstado;
+el('texto').oninput=function(){agendar(500);};
+
+/* ---------- inicio ---------- */
+el('texto').value=aj.texto||'';
+el('tamanho').value=aj.tamanho;el('velocidade').value=aj.velocidade;
+el('direcao').value=aj.direcao;el('espelho').value=aj.espelho;el('atraso').value=aj.atraso;
+rotulos();mostraCodigo();desenhaLista();vigia();
+</script>
+</body>
+</html>
